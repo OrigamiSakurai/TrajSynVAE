@@ -66,7 +66,7 @@ class MYDATA(Dataset):
             return x
         D = D.groupby("userId").apply(timedelta).reset_index(drop=True)
         D['timeDelta'] = D['timeDelta'].dt.total_seconds().fillna(0.0) / 60
-        D['absTime'] = (D['localTime'] - D['localTime'].min()).dt.total_seconds() // 60
+        D['absTime'] = (D['localTime'] - D['localTime'].min()).dt.total_seconds() / 60
        
         # Location
         MIN_LAT = D['latitude'].min()
@@ -100,28 +100,21 @@ class MYDATA(Dataset):
 
     def dfprepare_GL(self):
         # Load
-        lines = []
-        with open(self.PATH + 'timegeo_data_GeoLife.txt', 'r') as f:
-            for lin in f.readlines():
-                lines.append(lin)
-        records = []
-        for i in range(len(lines)): 
-            d = pd.DataFrame([value.split(',') for value in lines[0].split('\t')[1].split(';')[:-1]], columns=['lon', 'lat', 'tim'])
-            d['usr'] = lines[i].split('\t')[0]
-            records.append(d)
-        D = pd.concat(records)
+        D = pd.read_csv(self.PATH + 'GeoLife.csv')
+        def tim(x):
+            return pd.Timestamp(x['date'] + ' ' + x['time'])
+        D['tim'] = D.apply(tim, axis = 1)
         D = D[['usr', 'lat', 'lon', 'tim']]
         D = D.astype({'lon': float, 'lat': float, 'usr': int})
 
         # Time
-        D['tim'] = pd.to_datetime(D['tim'])
         D = D.sort_values(by=['usr', 'tim'])
         def timedelta(x):
             x['sta'] = x['tim'].shift(-1) - x['tim']
             return x
         D = D.groupby("usr").apply(timedelta).reset_index(drop=True)
         D['sta'] = D['sta'].dt.total_seconds().fillna(0.0) / 60
-        D['absTime'] = (D['tim'] - D['tim'].min()).dt.total_seconds() // 60
+        D['absTime'] = (D['tim'] - D['tim'].min()).dt.total_seconds() / 60
 
         # Location
         MIN_LAT = D['lat'].min()
@@ -237,7 +230,7 @@ class MYDATA(Dataset):
         def duplicate(x):
             if (x['dup'] == 0).sum():
                 return x
-            a = x.iloc[0:1,]
+            a = x.iloc[0:1]
             a['sta'] = x['sta'].sum()
             return pd.DataFrame(a)
         m = d.groupby('dup').apply(duplicate)
@@ -246,12 +239,12 @@ class MYDATA(Dataset):
 
     def preprocess_aggregate(self, data):
         d = pd.DataFrame.from_dict(data)
+        if d.shape[0] == 0:
+            return 
         agg = (d['sta'] < self.TIME_MIN)
         agg_start = (agg != agg.shift(1)) & (agg == agg.shift(-1)) & agg
         agg_end = (agg == agg.shift(1)) & (agg != agg.shift(-1)) & agg
         agg = (agg_start * agg_start.cumsum()) + (agg_end * agg_end.cumsum()).to_numpy()
-        if sum(agg) == 0:
-            return data
         for x in range(1, max(agg) + 1):
             slice = np.where(agg == x)[0]
             agg[slice[0]: slice[1] + 1] = x
@@ -261,7 +254,7 @@ class MYDATA(Dataset):
                 return x
             a = x.groupby('loc').sum()
             a = a.reset_index()
-            b = a[a['sta'] == a['sta'].max()]
+            b = a[a['sta'] == a['sta'].max()].iloc[0:1]
             b['tim'] = x['tim'].min()
             b['sta'] = x['sta'].sum()
             return b
@@ -274,28 +267,31 @@ class MYDATA(Dataset):
         m['sta'] = (m['tim'].shift(-1) - m['tim']).fillna(n)
         return {'loc': np.array(m['loc']), 'tim': np.array(m['tim']), 'sta': np.array(m['sta'])}
 
-    def preprocess_sparse(self, data, keep = True):
+    def preprocess_sparse(self, data, method='day'):
         d = pd.DataFrame.from_dict(data)
         d['cut'] = (d['sta'] >= self.TIME_MAX)
         d['cut'] = d['cut'].cumsum().shift(1).fillna(0)
+        d['day'] = d['tim'] // 1440
         cut = {}
         def sparse(x):
             if x.shape[0] < self.MIN_LEN:
                 return 
             tim = x['tim'].min()
-            if keep:
+            if x['sta'].iloc[-1] < self.TIME_MAX :
                 cut[tim] = {'loc': np.array(x['loc']), 'tim': np.array(x['tim']), 'sta': np.array(x['sta'])}
-                cut[tim]['sta'][-1] = min(self.TIME_MAX - 1, cut[tim]['sta'][-1])
             else:
                 cut[tim] = {'loc': np.array(x['loc'])[:-1], 'tim': np.array(x['tim'])[:-1], 'sta': np.array(x['sta'])[:-1]}
-        _ = d.groupby('cut').apply(sparse)
+        _ = d.groupby(method).apply(sparse)
         return cut
 
     def preprocess(self, D):
+        D = D[D['sta'] != 0]
+        
         data1 = {}
         def divide(x):
             user = x['usr'].min()
-            data1[user] = self.preprocess_sparse(x, False)
+            time = x['tim'].min()
+            data1[user] = {time: {'loc': np.array(x['loc'])[:-1], 'tim': np.array(x['tim'])[:-1], 'sta': np.array(x['sta'])[:-1]}}
         _ = D.groupby('usr').apply(divide)
 
         data2 = {}
@@ -309,7 +305,8 @@ class MYDATA(Dataset):
                 if data2[usr][tim] == None:
                     continue
                 data2[usr][tim] = self.preprocess_duplicate(data2[usr][tim])
-                data[usr].update(self.preprocess_sparse(data2[usr][tim]))
+                method = 'day' if self.NAME == 'ISP' else 'cut'
+                data[usr].update(self.preprocess_sparse(data2[usr][tim], method))
         for usr in data:
             data[usr] = {idx: x for idx, x in enumerate(list(data[usr].values()))} 
         return data
@@ -323,7 +320,7 @@ class MYDATA(Dataset):
             for usr in self.USERLIST:
                 for idx in self.DATA[usr]:
                     self.FILTEREDID = np.append(self.FILTEREDID, self.DATA[usr][idx]['loc'])
-            self.FILTEREDID = np.unique(np.sort(self.FILTEREDID)).astype(np.int)
+            self.FILTEREDID = np.unique(np.sort(self.FILTEREDID)).astype(int)
 
             self.GPS = self.GPS[np.ix_(self.FILTEREDID)]
             if self.NAME != 'GeoLife':
@@ -341,7 +338,7 @@ class MYDATA(Dataset):
                 np.save(self.PATH + 'POI_' + self.LOCATION_MODE + '.npy', self.POI)
 
         self.IDX = np.cumsum([len(self.DATA[user]) for user in self.DATA])
-        self.TESTDATA = None
+        self.REFORM = {}
         self.GENDATA = []
 
         self.poi_size = self.POI.shape[1] if self.NAME != 'GeoLife' else 0
@@ -392,7 +389,7 @@ def mycollatefunc(batch):
         output[feature] = pad_sequence(output[feature], batch_first=True)
     return output
 
-def reform(testset):
+def reform(testset, name):
     test_data = {}
     for x in testset.indices:
         traj = testset.dataset[x]
@@ -402,7 +399,7 @@ def reform(testset):
         else:
             key = len(test_data[user])
             test_data[user][key] = {'loc': traj['loc'], 'tim': traj['tim'], 'sta': traj['sta']}
-    testset.dataset.TESTDATA = test_data
+    testset.dataset.REFORM[name] = test_data
 
 def timefixed(data):
     D = pd.DataFrame.from_dict(data)
@@ -435,10 +432,30 @@ def timefixed(data):
     start = int(output['tim'].iloc[0] % 48)
     return {'internal': (start, start + output.shape[0] - 1),'loc': output['loc'].to_numpy()}
 
-def ToTimeFixed(data):
+def ToTimeFixed(data, PATH, MODE):
     fixed = {}
     for user in data:
         fixed[user] = {}
         for traj in data[user]:
             fixed[user][traj] = timefixed(data[user][traj])
+    np.save('./data/' + PATH + '/fixed_' + MODE + '.npy', fixed)
     return fixed
+
+
+if __name__ == '__main__':
+    data = MYDATA('GeoLife', 0)
+    def data_test(data, user, traj):
+        D = pd.DataFrame.from_dict(data)
+        if ((D['loc'] == D['loc'].shift(1)) | (D['loc'] == D['loc'].shift(-1))).sum():
+            print(user, traj)
+            print(D[(D['loc'] == D['loc'].shift(1)) | (D['loc'] == D['loc'].shift(-1))])
+        if ((D['tim'].shift(-1) - D['tim'] - D['sta']).abs() > 1e-4).sum():
+            print(user, traj)
+            print(D[(D['tim'].shift(-1) - D['tim']) != D['sta']])
+        if ((D['sta'] < 10) | (D['sta'] > 10080)).sum():
+            print(user, traj)
+            print(D[(D['sta'] < 10) | (D['sta'] > 10080)])
+    for user in data.DATA:
+        for traj in data.DATA[user]:
+            data_test(data.DATA[user][traj], user, traj)
+    

@@ -7,6 +7,7 @@ Functions for result evaluation
 """
 import numpy as np
 import pandas as pd
+import random
 
 import scipy.stats
 from sklearn.metrics import mean_squared_error
@@ -84,18 +85,12 @@ def transport_count(method, slot=60):
                 count_user[int(i)] += internal[j]
                 count_num[int(i)] += 1
         count = count + count_user
-    return (count/count_num)/12, count_num
+    count = np.array([(count[i] / count_num[i]) / 12 if count_num[i] != 0 else 0 for i in range(1440 // slot)])
+    return count, count_num
 
 
 # Calculate the JSD of two probability distributions
 def JSD(p,q):
-    length = max(len(p), len(q))
-    if length == len(p):
-        zeros = np.zeros(length - len(q))
-        q = np.concatenate((q, zeros))
-    else:
-        zeros = np.zeros(length - len(p))
-        p = np.concatenate((p, zeros))
     M = (p+q)/2
     return 0.5 * scipy.stats.entropy(p, M) + 0.5 * scipy.stats.entropy(q, M)
 
@@ -120,7 +115,7 @@ def probability(count, internal=None, smooth=True):
         unzip = np.array(list(Counter(np.sort(count)).item()))
         x = unzip[:, 0]
         P = unzip[:, 1]
-    p = P / sum(P)
+    p = P / sum(P) if sum(P) > 0 else np.ones_like(P) / len(P)
     c = np.cumsum(p)
     cc = (1 - c)[:-1]   
     return x, p, c, cc
@@ -140,19 +135,23 @@ def prob_plot(x, frequency, x_axis, y_axis, name1, name2, Log=False):
 
     plt.xlabel(x_axis, size=20)
     plt.ylabel(y_axis, size=20)
-    plt.xticks(np.arange(min(x), max(x) + (max(x) - min(x)) / 3, (max(x) - min(x)) / 3), fontsize=15)
+    # tick = np.arange(min(x), max(x) + (max(x) - min(x)) / 3, (max(x) - min(x)) / 3)
+    # if len(tick) > 4:
+        # tick = tick[:4]
+    # plt.xticks(tick, fontsize=15)
+    plt.xticks(fontsize=15)
     plt.yticks(fontsize=15)
     ax = plt.gca()
-    ax.xaxis.set_major_formatter(FormatStrFormatter('%1.2f'))
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%1.3f'))
     ax.yaxis.set_major_formatter(FormatStrFormatter('%1.2f'))
     if Log:
         ax.set_yscale("log")
-    else:
-        y = frequency['original']
-        tick = np.arange(min(y), max(y) + (max(y) - min(y)) / 3, (max(y) - min(y)) / 3)
-        if len(tick) > 4:
-            tick = tick[:4]
-        plt.yticks()
+    # else:
+        # y = frequency['original']
+        # tick = np.arange(min(y), max(y) + (max(y) - min(y)) / 3, (max(y) - min(y)) / 3)
+        # if len(tick) > 4:
+            # tick = tick[:4]
+        # plt.yticks(tick)
 
     plt.legend(handles=[ln1, ln2, ln3], labels=['Original', name1, name2], fontsize=18, frameon=False)
     plt.tight_layout()
@@ -207,34 +206,43 @@ def evaluation_plot(param, type, method_1, method_2, original, name1, name2, mod
 
 
 # Plot the evaluation of location rank
-def location_rank_plot(param, method_1, method_2, original, name1, name2, user=-1, mode='jsd'):
-    if user == -1:
-        Data = {'method_1': method_1, 'method_2': method_2, 'original': original}
-    else:
-        Data = {'method_1': {user: method_1[user]}, 'method_2': {user: method_2[user]},
-                'original': {user: original[user]}}
+def location_rank_plot(param, method_1, method_2, original, name1, name2, mode='jsd', user=True):
+    Data = {'method_1': method_1, 'method_2': method_2, 'original': original}
 
     count = {}
+    count_user = {user:{} for user in Data['original']}
     for method in ['method_1', 'method_2', 'original']:
         count[method] = np.zeros(param.loc_size)
-        for usr in Data[method]:
-            for traj in Data[method][usr]:
-                _, D = locations(Data[method][usr][traj], param)
-                count[method] += D
-
+        for usr in Data['original']:
+            count_user[usr][method] = np.zeros(param.loc_size)
+            if usr in Data[method]:
+                for traj in Data[method][usr]:
+                    _, D = locations(Data[method][usr][traj], param)
+                    count[method] += D
+                    count_user[usr][method] += D
     internal = (0, param.loc_size)
     x = np.arange(internal[0], internal[1])
+    def toprob(x):
+        if sum(x) == 0:
+            return np.ones_like(x) / len(x)
+        return x / sum(x)
     PDF = {}
-    for method in count:
-        xx, p, c, cc = probability(count[method], internal, False)
-        PDF[method] = p
-    jsd = [JSD(PDF['method_1'], PDF['original']), JSD(PDF['method_2'], PDF['original'])]
+    PDF = {method: toprob(count[method]) for method in count}
+    jsd_G = [JSD(PDF['method_1'], PDF['original']), JSD(PDF['method_2'], PDF['original'])]
+
+
+    PDF_user = {user:{} for user in Data['original']}
+    jsd_user = {user:[] for user in Data['original']}
+    for user in count_user:
+        PDF_user[user] = {method: toprob(count_user[user][method]) for method in count_user[user]}
+        jsd_user[user] = [JSD(PDF_user[user]['method_1'], PDF_user[user]['original']), JSD(PDF_user[user]['method_2'], PDF_user[user]['original'])]
+    jsd_I = [np.mean([jsd_user[user][0] for user in jsd_user]), np.mean([jsd_user[user][1] for user in jsd_user])]
 
     if mode == 'plot':
         frequency = {}
 
-        unzip = np.array(sorted(np.array([x, PDF['original']]), key=lambda x: x[1], reverse=True)).T
-        Len = 50 if user == -1 else min(20, np.argwhere(unzip[:, 1] == 0)[0][0])
+        unzip = np.array(sorted(np.array([x, PDF['original']]).T, key=lambda x: x[1], reverse=True))
+        Len = min(50, np.argwhere(unzip[:, 1] == 0)[0][0])
         X = unzip[:Len, 0]
         x = np.arange(Len)
         frequency['original'] = unzip[:Len, 1]
@@ -242,11 +250,10 @@ def location_rank_plot(param, method_1, method_2, original, name1, name2, user=-
         for method in ['method_1', 'method_2']:
             frequency[method] = np.array([PDF[method][int(id)] for id in X])
 
-        plot_type = 'G-rank' if user == -1 else 'I-rank'
+        plot_type = 'G-rank' 
         prob_plot(x, frequency, plot_type, 'P', name1, name2)
         plt.savefig(param.save_path + '/plots' + '/' + plot_type + '.png')
-
-    return jsd
+    return jsd_G, jsd_I
 
 
 # Plot the average waiting time of records having different beginnings
@@ -254,13 +261,23 @@ def transport_count_plot(param, method_1, method_2, original, slot, name1, name2
     count_1, num1 = transport_count(method_1, slot)
     count_2, num2 = transport_count(method_2, slot)
     count_3, num3 = transport_count(original, slot)
+    def toprob(x):
+        if sum(x) == 0:
+            return np.ones_like(x) / len(x)
+        return x / sum(x)
+    count_1 = toprob(count_1)
+    count_2 = toprob(count_2)
+    count_3 = toprob(count_3)
+    num1 = toprob(num1)
+    num2 = toprob(num2)
+    num3 = toprob(num3)
 
     if mode == 'plot':
         plt.figure()
         x = np.arange(0, 24, slot / 60)
-        ln1, = plt.plot(x, count_3 / sum(count_3), color='red', linewidth=1, linestyle='-', marker='^', markersize=3)
-        ln2, = plt.plot(x, count_1 / sum(count_1), color='blue', linewidth=1, linestyle='-', marker='^', markersize=3)
-        ln3, = plt.plot(x, count_2 / sum(count_2), color='green', linewidth=1, linestyle='-', marker='^', markersize=3)
+        ln1, = plt.plot(x, count_3, color='red', linewidth=1, linestyle='-', marker='^', markersize=3)
+        ln2, = plt.plot(x, count_1, color='blue', linewidth=1, linestyle='-', marker='^', markersize=3)
+        ln3, = plt.plot(x, count_2, color='green', linewidth=1, linestyle='-', marker='^', markersize=3)
 
         plt.xlabel('Time(hour)', size=20)
         plt.ylabel('Average Waiting Time(Normalized)', size=15)
@@ -272,9 +289,10 @@ def transport_count_plot(param, method_1, method_2, original, slot, name1, name2
 
         plt.savefig(param.save_path + '/plots' + '/stay_' + str(slot) + '.png')
 
-        ln1, = plt.plot(x, num3 / sum(num3), color='red', linewidth=1, linestyle='-', marker='^', markersize=3)
-        ln2, = plt.plot(x, num1 / sum(num1), color='blue', linewidth=1, linestyle='-', marker='^', markersize=3)
-        ln3, = plt.plot(x, num2 / sum(num2), color='green', linewidth=1, linestyle='-', marker='^', markersize=3)
+        plt.figure()
+        ln1, = plt.plot(x, num3, color='red', linewidth=1, linestyle='-', marker='^', markersize=3)
+        ln2, = plt.plot(x, num1, color='blue', linewidth=1, linestyle='-', marker='^', markersize=3)
+        ln3, = plt.plot(x, num2, color='green', linewidth=1, linestyle='-', marker='^', markersize=3)
 
         plt.xlabel('Time(hour)', size=20)
         plt.ylabel('P', size=15)
@@ -284,22 +302,22 @@ def transport_count_plot(param, method_1, method_2, original, slot, name1, name2
         plt.legend(handles=[ln1, ln2, ln3], labels=['Original', name1, name2], fontsize=18, frameon=False)
         plt.tight_layout()
 
-        # plt.save/fig(param.save_path + '/plots' + '/move_' + str(slot) + '.png')
+        plt.savefig(param.save_path + '/plots' + '/move_' + str(slot) + '.png')
 
-    jsd = [JSD(num1 / sum(num1), num3 / sum(num3)), JSD(num2 / sum(num2), num3 / sum(num3))]
-    mse = [mean_squared_error(count_1 / sum(count_1), count_3 / sum(count_3)), mean_squared_error(count_2 / sum(count_2), count_3 / sum(count_3))]
+    jsd = [JSD(num1, num3), JSD(num2, num3)]
+    mse = [mean_squared_error(count_1, count_3), mean_squared_error(count_2, count_3)]
     return jsd, mse
 
 
 # For a easier call
 def EVALUATION(param, method_1, method_2, original, name1, name2, mode = 'jsd'):
-    user_id = 705478 if param.data_type == 'ISP' else 1
     jsd = {}
+    print(1)
     jsd['move'], jsd['stay'] = transport_count_plot(param, method_1, method_2, original, 60, name1, name2, mode=mode)
     jsd['travel_distance'] = evaluation_plot(param, 'Distance', method_1, method_2, original, name1, name2, mode)
     jsd['radius'] = evaluation_plot(param, 'Radius', method_1, method_2, original, name1, name2, mode)
     jsd['duration'] = evaluation_plot(param, 'Duration', method_1, method_2, original, name1, name2, mode)
-    jsd['I_rank'] = location_rank_plot(param, method_1, method_2, original, name1, name2, user_id, mode)
+    _, jsd['I_rank'] = location_rank_plot(param, method_1, method_2, original, name1, name2, mode)
     jsd = pd.DataFrame(jsd, index=[name1, name2])
     if mode == 'plot':
         print(jsd)

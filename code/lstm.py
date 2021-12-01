@@ -24,6 +24,7 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 np.random.seed(SEED)
 
+
 class ABS_TIM_EMB(nn.Module):
 
     def __init__(self, param):
@@ -37,19 +38,6 @@ class ABS_TIM_EMB(nn.Module):
         c[:, 0::2] = b[:, 0::2].sin()
         c[:, 1::2] = b[:, 1::2].cos()
         return c
-
-
-class TIM_DIFF_EMB(nn.Module):
-
-    def __init__(self, param):
-        super().__init__()
-
-        self.tim_size = param.tim_size
-        self.tim_emb_size = param.tim_emb_size
-        self.emb_tim = nn.Embedding(self.tim_size, self.tim_emb_size)
-
-    def forward(self, x):
-        return self.emb_tim(x)
 
 
 class LOC_EMB(nn.Module):
@@ -79,87 +67,18 @@ class USR_EMB(nn.Module):
         return self.emb_usr(usr2id)
 
 
-class POI_EMB(nn.Module):
+class LSTM(nn.Module):
 
     def __init__(self, param):
-        super().__init__()
-        self.POI = param.POI
-
-    def forward(self, x):
-        return torch.tensor(np.array([self.POI[np.ix_(locs.cpu())] for locs in x]), dtype=torch.double).to(device)
-
-
-class ENCODER(nn.Module):
-
-    def __init__(self, param, emb):
-        super(ENCODER, self).__init__()
+        super(LSTM, self).__init__()
 
         # Embedding
-        self.emb_loc = emb[0]
-        self.emb_tim = emb[1]
-        self.emb_usr = emb[2]
-        self.emb_pos = emb[3]
-        if param.poi_size > 0:
-            self.emb_poi = emb[4]
-        else: 
-            self.emb_poi = None
-
-        # Encoder RNN
-        self.encoder_rnn_input_size = param.loc_emb_size + param.tim_emb_size + param.usr_emb_size + param.d_model + param.poi_size
-        self.encoder_rnn_hidden_size = param.encoder_rnn_hidden_size
-        self.encoder_rnn = nn.LSTM(self.encoder_rnn_input_size, self.encoder_rnn_hidden_size, 1, batch_first=True)
-
-        # Gauss distribution for latent variable
-        self.z_hidden_size_mean = param.z_hidden_size_mean
-        self.z_hidden_size_std = param.z_hidden_size_std
-        self.latent_size = param.latent_size
-        self.mean_l1 = nn.Linear(self.encoder_rnn_hidden_size, self.z_hidden_size_mean)
-        self.mean_l2 = nn.Linear(self.z_hidden_size_mean, self.latent_size)
-        self.std_l1 = nn.Linear(self.encoder_rnn_hidden_size, self.z_hidden_size_std)
-        self.std_l2 = nn.Linear(self.z_hidden_size_std, self.latent_size)
-
-        # Dropout
-        self.dropout = nn.Dropout(p=param.dropout)
-
-    # Forward function
-    def forward(self, usr, loc, tim, pos):
-
-        # Embedding of location, waiting time and user ID
-        loc_emb = self.emb_loc(loc)
-        tim_emb = self.emb_tim(tim)
-        usr_emb = self.emb_usr(usr)
-        pos_emb = self.emb_pos(pos)
-        if self.emb_poi != None:
-            poi_emb = self.emb_poi(loc)
-            x_emb = torch.cat((loc_emb, poi_emb, tim_emb, usr_emb, pos_emb), -1)
-        else:
-            x_emb = torch.cat((loc_emb, tim_emb, usr_emb, pos_emb), -1)
-        x_emb = self.dropout(x_emb)
-
-        # Encoder RNN
-        batchsize = loc.shape[0]
-        h1 = torch.zeros(1, batchsize, self.encoder_rnn_hidden_size).to(device)
-        c1 = torch.zeros(1, batchsize, self.encoder_rnn_hidden_size).to(device)
-        hidden, _ = self.encoder_rnn(x_emb, (h1, c1))
-
-        # param for Gauss distribution
-        mean = self.mean_l2(F.relu(self.mean_l1(hidden)))
-        std = self.std_l2(F.relu(self.std_l1(hidden)))
-
-        return mean, std 
-
-
-class DECODER(nn.Module):
-
-    def __init__(self, param, emb):
-        super(DECODER, self).__init__()
-
-        # Embedding
-        self.emb_usr = emb[2]
-        self.emb_pos = emb[3]
+        self.emb_loc = LOC_EMB(param)
+        self.emb_usr = USR_EMB(param)
+        self.emb_tim = ABS_TIM_EMB(param)
 
         # Decoder RNN
-        self.decoder_rnn_input_size = param.latent_size + param.usr_emb_size + param.d_model
+        self.decoder_rnn_input_size = param.loc_emb_size + param.usr_emb_size + param.d_model
         self.decoder_rnn_hidden_size = param.decoder_rnn_hidden_size
         self.decoder_rnn = nn.LSTM(self.decoder_rnn_input_size, self.decoder_rnn_hidden_size, 1, batch_first=True)
 
@@ -174,11 +93,6 @@ class DECODER(nn.Module):
         self.loc_l1 = nn.Linear(self.decoder_rnn_hidden_size, self.loc_hidden_size1)
         self.loc_l2 = nn.Linear(self.loc_hidden_size1, self.loc_hidden_size2)
         self.loc_l3 = nn.Linear(self.loc_hidden_size2, self.loc_size)
-        if self.poi_size > 0:
-            self.loc_l4 = nn.Linear(self.loc_hidden_size2, self.poi_size)
-            self.loc_l5 = nn.Linear(self.poi_size, 1)
-            self.POI = param.POI
-            self.poi_weight = param.poi_weight
 
         # Waiting time decoder
         self.tim_hidden_size1 = param.tim_hidden_size1
@@ -187,12 +101,13 @@ class DECODER(nn.Module):
         self.tim_l2 = nn.Linear(self.tim_hidden_size1, self.tim_hidden_size2)
         self.tim_l3 = nn.Linear(self.tim_hidden_size2, 1)
 
-    def forward(self, usr, pos, z):#, loc_weight, usr_weight):
+    def forward(self, usr, loc, sta):
 
         # Embedding
         usr_emb = self.emb_usr(usr)
-        pos_emb = self.emb_pos(pos)
-        z = torch.cat((z, usr_emb, pos_emb), -1)
+        loc_emb = self.emb_loc(loc)
+        tim_emb = self.emb_tim(sta)
+        z = torch.cat((tim_emb, usr_emb, loc_emb), -1)
         z = self.dropout(z)
 
         # Decoder RNN
@@ -202,13 +117,7 @@ class DECODER(nn.Module):
         hidden, _ = self.decoder_rnn(z, (h1, c1))
 
         # Location decoder 
-        lout2 = F.selu(self.loc_l2(F.selu(self.loc_l1(hidden))))
-        lout_1 = F.softmax(self.loc_l3(lout2), dim=2)
-        if self.poi_size > 0:
-            lout_2 = F.softmax(self.loc_l5(F.selu(self.loc_l4(lout2)).unsqueeze(-2) * torch.tensor(self.POI).to(device)).squeeze(-1), dim=1)
-            lout = (1 - self.poi_weight) * lout_1 + self.poi_weight * lout_2
-        else:
-            lout = lout_1
+        lout = F.softmax(self.loc_l3(F.selu(self.loc_l2(F.selu(self.loc_l1(hidden))))), dim=2)
 
         # Waiting time decoder
         tout = torch.exp(self.tim_l3(F.relu(self.tim_l2(F.relu(self.tim_l1(hidden)))))).squeeze(-1)
@@ -216,24 +125,13 @@ class DECODER(nn.Module):
         return lout, tout
 
 
-class VAE(nn.Module):
+class LSTMMODEL(nn.Module):
 
     def __init__(self, param):
 
         super().__init__()
         # Embedding
-        self.emb_loc = LOC_EMB(param)
-        self.emb_tim = TIM_DIFF_EMB(param)
-        self.emb_usr = USR_EMB(param)
-        self.emb_pos = ABS_TIM_EMB(param)
-        if param.poi_size > 0:
-            self.emb_poi = POI_EMB(param)
-            emb = [self.emb_loc, self.emb_tim, self.emb_usr, self.emb_pos, self.emb_poi]
-        else:
-            emb = [self.emb_loc, self.emb_tim, self.emb_usr, self.emb_pos]
-        
-        self.encoder = ENCODER(param, emb)
-        self.decoder = DECODER(param, emb)
+        self.model = LSTM(param)
         self.dropout = nn.Dropout(p=param.dropout)
 
         self.latent_size = param.latent_size
@@ -262,33 +160,21 @@ class VAE(nn.Module):
 
     def forward(self, inseq):
 
-        # Encoder
-        mean, std = self.encoder(inseq['usr'], inseq['loc'], inseq['tim'], inseq['pos'])
-
-        # Sampling
-        z = torch.randn_like(std).to(device)
-        z = z * std + mean
-        z = self.dropout(z)
-
         # Decoder
-        lout, tout = self.decoder(inseq['usr'], inseq['pos'], z)
+        lout, tout = self.model(inseq['usr'], inseq['loc'], inseq['tim'])
 
-        return mean, std, lout, tout
+        return lout, tout
 
     @staticmethod
-    def loss(step, mean, std, lout, tout, inseq):
+    def loss(lout, tout, inseq):
 
-        KL = torch.mean(0.5 * torch.sum((std ** 2) - 1 - torch.log(std ** 2) + (mean ** 2), dim=-1))
         criterion = nn.NLLLoss()
         LL_L = criterion(torch.log(lout.swapaxes(1,2)), inseq['loc'])
         LL_T = -torch.mean(torch.log(1 - torch.exp(-tout / 1000)) - (tout / 1000) * inseq['tim'])
 
-        # Train the decoder first
-        weight = 1
-        # weight = torch.tensor(1 / (1 + np.exp(-1 * (step - 10)))).to(device)
-        LOSS = LL_T + weight * (LL_L + KL)
+        LOSS = LL_T + LL_L
 
-        return KL, LL_L, LL_T, LOSS
+        return LL_L, LL_T, LOSS
 
     def sample(self, lout, tout, last_loc=-1):
         Lambda = tout[0][-1].squeeze().cpu().detach().numpy()
@@ -304,18 +190,20 @@ class VAE(nn.Module):
     def inference(self, user):
 
         # Sampling
-        z = torch.randn(self.infer_maxlength, self.latent_size).to(device)
         usr = user * torch.ones(self.infer_maxlength, dtype=torch.long).to(device)
+        tim = torch.zeros((1,1), dtype=torch.double).to(device)
+        loc = torch.tensor([[np.random.choice(list(range(self.loc_size)))]], dtype=torch.long).to(device)
 
         # Decoder & Generate
-        lout1, tout1 = self.decoder(usr[0].view(1,1), torch.zeros((1,1), dtype=torch.double).to(device), z[0].view(1,1,-1))
+        lout1, tout1 = self.model(usr[0].view(1,1), loc, tim)
         l, t = self.sample(lout1, tout1)
-        X = {'loc': [], 'tim': [t], 'sta': []}
-        last_location = int(l)
+        X = {'loc': [l], 'tim': [t], 'sta': []}
+        last_location = int(X['loc'][-1])
 
         for i in range(1, 5000):
             time = torch.tensor([X['tim']], dtype=torch.double).to(device)
-            louti, touti = self.decoder(usr[:i].unsqueeze(0), time, z[:i].unsqueeze(0))
+            location = torch.tensor([X['loc']], dtype=torch.long).to(device)
+            louti, touti = self.model(usr[:i].unsqueeze(0), location, time)
             l, t = self.sample(louti, touti, last_location)
             if X['tim'][-1] + t >= self.infer_maxlast:
                 break  
@@ -326,7 +214,7 @@ class VAE(nn.Module):
 
         X['tim'] = np.array(X['tim'])[:-1]
         X['sta'] = np.array(X['sta'])
-        X['loc'] = np.array(X['loc'])
+        X['loc'] = np.array(X['loc'])[:-1]
         return X
 
     def load(self, cp):
@@ -376,7 +264,7 @@ class VAE(nn.Module):
             print('Epoch: %s' % (epoch))
 
             optimizer.zero_grad()
-            loss_record[epoch] = {"LOSS": [], "KL": [], "LL_T": [], "LL_L": []}
+            loss_record[epoch] = {"LOSS": [], "LL_T": [], "LL_L": []}
 
             mydataloader = DataLoader(trainset, batch_size=self.batchsize, shuffle=True, num_workers=0, collate_fn=mycollatefunc)
             for idx, bat in enumerate(mydataloader):
@@ -388,26 +276,26 @@ class VAE(nn.Module):
                 usr = bat['usr'].clone().detach().long().to(device)
                 pos = bat['tim'].clone().detach().double().to(device)
 
-                inseq = {'usr': usr, 'loc': loc, 'tim': tim, 'pos': pos}
+                inseq = {'usr': usr[:, :-1], 'loc': loc[:, :-1], 'tim': pos[:, :-1]}
+                loseq = {'usr': usr[:, 1:], 'loc': loc[:, 1:], 'tim': tim[:, :-1]}
+
 
                 # Output
-                mean, std, lout, tout = self.forward(inseq)
+                lout, tout = self.forward(inseq)
 
                 # Loss
-                KL, LL_L, LL_T, LOSS = VAE.loss(self.step, mean, std, lout, tout, inseq)
+                LL_L, LL_T, LOSS = LSTMMODEL.loss(lout, tout, loseq)
 
                 # Backward
                 LOSS.backward()
                 optimizer.step()
 
                 # Loss record
-                loss_record[epoch]['KL'].append(KL.item())
                 loss_record[epoch]['LL_L'].append(LL_L.item())
                 loss_record[epoch]['LL_T'].append(LL_T.item())
                 loss_record[epoch]['LOSS'].append(LOSS.item())
 
-                print('Index: %s, KL: %s, LL_L: %s, LL_T: %s, ELBO: %s' % (idx, loss_record[epoch]['KL'][-1],
-                                                                loss_record[epoch]['LL_L'][-1],
+                print('Index: %s, LL_L: %s, LL_T: %s, ELBO: %s' % (idx, loss_record[epoch]['LL_L'][-1],
                                                                 loss_record[epoch]['LL_T'][-1],
                                                                 loss_record[epoch]['LOSS'][-1]))
 
@@ -419,7 +307,7 @@ class VAE(nn.Module):
 
                 print('Start Validation')
 
-                valid_record[epoch] = {"LOSS": [], "KL": [], "LL_T": [], "LL_L": []}
+                valid_record[epoch] = {"LOSS": [], "LL_T": [], "LL_L": []}
 
                 mydataloader = DataLoader(validset, batch_size=self.batchsize, shuffle=True, num_workers=0, collate_fn=mycollatefunc)
                 for bat in mydataloader:
@@ -430,22 +318,21 @@ class VAE(nn.Module):
                     usr = bat['usr'].clone().detach().long().to(device)
                     pos = bat['tim'].clone().detach().double().to(device)
 
-                    inseq = {'usr': usr, 'loc': loc, 'tim': tim, 'pos': pos}
+                    inseq = {'usr': usr[:, :-1], 'loc': loc[:, :-1], 'tim': pos[:, :-1]}
+                    loseq = {'usr': usr[:, 1:], 'loc': loc[:, 1:], 'tim': tim[:, :-1]}
 
                     # Output
-                    mean, std, lout, tout = self.forward(inseq)
+                    lout, tout = self.forward(inseq)
 
                     # Loss
-                    KL, LL_L, LL_T, LOSS = VAE.loss(self.step, mean, std, lout, tout, inseq)
+                    LL_L, LL_T, LOSS = LSTMMODEL.loss(lout, tout, loseq)
 
                     # Loss record
-                    valid_record[epoch]['KL'].append(KL.item())
                     valid_record[epoch]['LL_L'].append(LL_L.item())
                     valid_record[epoch]['LL_T'].append(LL_T.item())
                     valid_record[epoch]['LOSS'].append(LOSS.item())
 
-                print('Epoch: %s, KL: %s, LL_L: %s, LL_T: %s, ELBO: %s' % (epoch, np.mean(valid_record[epoch]['KL']),
-                                                                    np.mean(valid_record[epoch]['LL_L']),
+                print('Epoch: %s, LL_L: %s, LL_T: %s, ELBO: %s' % (epoch, np.mean(valid_record[epoch]['LL_L']),
                                                                     np.mean(valid_record[epoch]['LL_T']),
                                                                     np.mean(valid_record[epoch]['LOSS'])))
 
@@ -464,7 +351,7 @@ class VAE(nn.Module):
     def test(self, testset):
 
         print('Start Testing')
-        test_record = {"LOSS": [], "KL": [], "LL_T": [], "LL_L": []}
+        test_record = {"LOSS": [], "LL_T": [], "LL_L": []}
         
         mydataloader = DataLoader(testset, batch_size=self.batchsize, shuffle=True, num_workers=0, collate_fn=mycollatefunc)
         for bat in mydataloader:
@@ -475,22 +362,21 @@ class VAE(nn.Module):
             usr = bat['usr'].clone().detach().long().to(device)
             pos = bat['tim'].clone().detach().double().to(device)
 
-            inseq = {'usr': usr, 'loc': loc, 'tim': tim, 'pos': pos}
+            inseq = {'usr': usr[:, :-1], 'loc': loc[:, :-1], 'tim': pos[:, :-1]}
+            loseq = {'usr': usr[:, 1:], 'loc': loc[:, 1:], 'tim': tim[:, :-1]}
 
             # Output
-            mean, std, lout, tout = self.forward(inseq)
+            lout, tout = self.forward(inseq)
 
             # Loss
-            KL, LL_L, LL_T, LOSS = VAE.loss(self.step, mean, std, lout, tout, inseq)
+            LL_L, LL_T, LOSS = LSTMMODEL.loss(lout, tout, loseq)
 
             # Loss record
-            test_record['KL'].append(KL.item())
             test_record['LL_L'].append(LL_L.item())
             test_record['LL_T'].append(LL_T.item())
             test_record['LOSS'].append(LOSS.item())
 
-        print('KL: %s, LL_L: %s, LL_T: %s, ELBO: %s' % (np.mean(test_record['KL']),
-                                                        np.mean(test_record['LL_L']),
+        print('LL_L: %s, LL_T: %s, ELBO: %s' % (np.mean(test_record['LL_L']),
                                                         np.mean(test_record['LL_T']),
                                                         np.mean(test_record['LOSS'])))
         
@@ -500,12 +386,10 @@ class VAE(nn.Module):
 
     def loss_plot(self, loss_record, valid_record, test_record):
 
-        KL = [np.mean(loss_record[epoch]['KL']) for epoch in loss_record]
         LL_L = [np.mean(loss_record[epoch]['LL_L']) for epoch in loss_record]
         LL_T = [np.mean(loss_record[epoch]['LL_T']) for epoch in loss_record]
         LOSS = [np.mean(loss_record[epoch]['LOSS']) for epoch in loss_record]
 
-        valid_KL = [np.mean(valid_record[epoch]['KL']) for epoch in valid_record]
         valid_LL_L = [np.mean(valid_record[epoch]['LL_L']) for epoch in valid_record]
         valid_LL_T = [np.mean(valid_record[epoch]['LL_T']) for epoch in valid_record]
         valid_LOSS = [np.mean(valid_record[epoch]['LOSS']) for epoch in valid_record]
@@ -515,17 +399,7 @@ class VAE(nn.Module):
     
         plt.figure()
 
-        plt.subplot(221)
-        ln1, = plt.plot(x, KL, color='red', linewidth=2.0, linestyle='-')
-        ln2, = plt.plot(y, valid_KL, color='blue', linewidth=2.0, linestyle='-')
-        plt.title('KL, Test = ' + str(np.around(np.mean(test_record['KL']), decimals=3)))
-        plt.xlabel('Epoches')
-        plt.ylabel('KLLoss')
-        plt.xticks(fontsize=12)
-        plt.yticks(fontsize=12)
-        plt.legend(handles=[ln1, ln2], labels=['Train', 'Valid'])
-
-        plt.subplot(222)
+        plt.subplot(131)
         ln1, = plt.plot(x, LL_L, color='red', linewidth=2.0, linestyle='-')
         ln2, = plt.plot(y, valid_LL_L, color='blue', linewidth=2.0, linestyle='-')
         plt.title('LL_L, Test = ' + str(np.around(np.mean(test_record['LL_L']), decimals=3)))
@@ -535,7 +409,7 @@ class VAE(nn.Module):
         plt.yticks(fontsize=12)
         plt.legend(handles=[ln1, ln2], labels=['Train', 'Valid'])
 
-        plt.subplot(223)
+        plt.subplot(132)
         ln1, = plt.plot(x, LL_T, color='red', linewidth=2.0, linestyle='-')
         ln2, = plt.plot(y, valid_LL_T, color='blue', linewidth=2.0, linestyle='-')
         plt.title('LL_T, Test = ' + str(np.around(np.mean(test_record['LL_T']), decimals=3)))
@@ -545,7 +419,7 @@ class VAE(nn.Module):
         plt.yticks(fontsize=12)
         plt.legend(handles=[ln1, ln2], labels=['Train', 'Valid'])
 
-        plt.subplot(224)
+        plt.subplot(133)
         ln1, = plt.plot(x, LOSS, color='red', linewidth=2.0, linestyle='-')
         ln2, = plt.plot(y, valid_LOSS, color='blue', linewidth=2.0, linestyle='-')
         plt.title('ELBO, Test = ' + str(np.around(np.mean(test_record['LOSS']), decimals=3)))

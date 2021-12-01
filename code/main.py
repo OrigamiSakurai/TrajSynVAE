@@ -13,23 +13,25 @@ import numpy as np
 
 from data_prepare import MYDATA, getsets, reform
 from model import VAE
+from lstm import LSTMMODEL
 from semi_markov import SEMIMARKOV
 from result_evaluation import EVALUATION
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+# device = torch.device('cpu')
+torch.set_default_tensor_type(torch.DoubleTensor)
 
 
 def EVAL(param, data):
     print('Start Evaluation')
     generated = data.GENDATA[-1]
-    original = data.TESTDATA[-1]
+    original = data.REFORM['test']
+    np.save(param.save_path + 'data/original.npy', original)
+    np.save(param.save_path + 'data/generated.npy', generated)
     jsd = EVALUATION(param, generated, SM, original, 'Our Model', 'Semi Markov', 'plot')
     # Overlapping_ratio_plot(generated, original)
-    np.save('./data/original.npy', original)
-    np.save('./data/generated.npy', generated)
     with open(param.save_path + 'result_evaluation.csv', 'a', encoding='utf-8', newline='') as f:
         csv_writer = csv.writer(f)
-        csv_writer.writerow(['Method', 'travel_distance', 'radius', 'duration', 'I_rank', 'move', 'stay'])
         csv_writer.writerow(['Our', jsd['travel_distance'][0], jsd['radius'][0], jsd['duration'][0],
                             jsd['I_rank'][0], jsd['move'][0], jsd['stay'][0]])
         csv_writer.writerow(['Semi_Markov', jsd['travel_distance'][1], jsd['radius'][1], jsd['duration'][1],
@@ -42,6 +44,7 @@ class parameters(object):
     def __init__(self, args) -> None:
         super().__init__()
         
+        self.model_type = args.model_type
         self.data_type = args.data_type
         self.location_mode = args.location_mode
 
@@ -68,6 +71,7 @@ class parameters(object):
         self.epoches = args.epoches
         self.batchsize = args.batchsize
         self.trainsize = args.trainsize
+        self.exptimes = args.exptimes
 
         save_path = './RES/' + '-'.join([str(self.__dict__[v]) for _, v in enumerate(self.__dict__)]) + '/' + str(datetime.datetime.now().strftime('%Y-%m%d-%H%M') + '/')
         # Write down the parameters
@@ -78,6 +82,7 @@ class parameters(object):
             csv_writer = csv.writer(f)
             csv_writer.writerow([x for x in self.__dict__])
             csv_writer.writerow([self.__dict__[v] for v in self.__dict__])
+            csv_writer.writerow(['Method', 'travel_distance', 'radius', 'duration', 'I_rank', 'move', 'stay'])
         self.save_path = save_path
 
     def data_info(self, data):
@@ -90,9 +95,9 @@ class parameters(object):
         self.usr_size = data.usr_size
         self.poi_size = data.poi_size
 
-        self.infer_maxlast = data.infer_maxlast #10080
-        self.infer_maxinternal = data.infer_maxinternal #43200
-        self.infer_divide = data.infer_divide #1440
+        self.infer_maxlast = data.infer_maxlast 
+        self.infer_maxinternal = data.infer_maxinternal 
+        self.infer_divide = data.infer_divide 
         
 
 if __name__ == '__main__':
@@ -100,6 +105,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--data_type', type=str, default='FourSquare_NYC', choices=['ISP', 'GeoLife', 'FourSquare_NYC', 'FourSquare_TKY'])
     parser.add_argument('-l', '--location_mode', type=int, default=1, choices=[0, 1, 2])
+    parser.add_argument('-m', '--model_type', type=str, default='VAE', choices=['VAE', 'LSTM'])
 
     parser.add_argument('--tim_emb_size', type=int, default=256)
     parser.add_argument('--loc_emb_size', type=int, default=256)
@@ -117,26 +123,35 @@ if __name__ == '__main__':
     parser.add_argument('--tim_hidden_size2', type=int, default=64)
     parser.add_argument('--poi_weight', type=float, default=0.1)
 
-    parser.add_argument('--learning_rate', type=float, default=1e-4)
+    parser.add_argument('--learning_rate', type=float, default=1e-5)
     parser.add_argument('--L2', type=float, default=1e-5)
     parser.add_argument('--step_size', type=int, default=20)
     parser.add_argument('--gamma', type=float, default=0.5)
     parser.add_argument('-e', '--epoches', type=int, default=120)
-    parser.add_argument('-b', '--batchsize', type=int, default=5)
+    parser.add_argument('-b', '--batchsize', type=int, default=3)
     parser.add_argument('-t', '--trainsize', type=float, default=0.8)
+    parser.add_argument('-n', '--exptimes', type=int, default=1)
 
     args = parser.parse_args()
     param = parameters(args)
 
     data = MYDATA(param.data_type, param.location_mode)
-    SM = SEMIMARKOV(data.DATA)
     param.data_info(data)
 
     trainset, validset, testset = getsets(data, param.trainsize, 0.9 - param.trainsize)
-    reform(testset)
+    reform(trainset, 'train')
+    reform(validset, 'valid')
+    reform(testset, 'test')
+    
+    SM = SEMIMARKOV(data.REFORM['train'])
     print('Data Loaded')
-    model = VAE(param)
-    model = model.to(device)
-    model.run(trainset, validset, testset)
-
-    jsd = EVAL(param, testset)
+    for i in range(param.exptimes):
+        if param.model_type == 'VAE':
+            model = VAE(param) 
+        else:
+            model = LSTMMODEL(param)
+        model = model.double().to(device)
+        model.run(trainset, validset, testset)
+        # model.load('./Model')
+        # model.test_data_prepare(testset.dataset)
+        jsd = EVAL(param, data)

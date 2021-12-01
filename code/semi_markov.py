@@ -5,7 +5,6 @@ Created on Sep 15th 18:05:53 2020
 
 Baseline 1: Semi-Markov Model(SMM)
 """
-
 import numpy as np
 
 def SEMIMARKOV(data, MAX_LENGTH = 1000):
