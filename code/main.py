@@ -33,9 +33,9 @@ def EVAL(param, data):
     with open(param.save_path + 'result_evaluation.csv', 'a', encoding='utf-8', newline='') as f:
         csv_writer = csv.writer(f)
         csv_writer.writerow(['Our', jsd['travel_distance'][0], jsd['radius'][0], jsd['duration'][0],
-                            jsd['I_rank'][0], jsd['move'][0], jsd['stay'][0]])
+                            jsd['G_rank'][0], jsd['I_rank'][0], jsd['move'][0], jsd['stay'][0]])
         csv_writer.writerow(['Semi_Markov', jsd['travel_distance'][1], jsd['radius'][1], jsd['duration'][1],
-                            jsd['I_rank'][1], jsd['move'][1], jsd['stay'][1]])
+                            jsd['G_rank'][1], jsd['I_rank'][1], jsd['move'][1], jsd['stay'][1]])
     return jsd
 
 
@@ -82,7 +82,7 @@ class parameters(object):
             csv_writer = csv.writer(f)
             csv_writer.writerow([x for x in self.__dict__])
             csv_writer.writerow([self.__dict__[v] for v in self.__dict__])
-            csv_writer.writerow(['Method', 'travel_distance', 'radius', 'duration', 'I_rank', 'move', 'stay'])
+            csv_writer.writerow(['Method', 'travel_distance', 'radius', 'duration', 'G_rank', 'I_Rank', 'move', 'stay'])
         self.save_path = save_path
 
     def data_info(self, data):

@@ -346,8 +346,8 @@ class MYDATA(Dataset):
         self.tim_size = 10080 if self.NAME == 'FourSquare' else 1440
         self.loc_size = self.GPS.shape[0]
 
-        self.infer_maxlast = 10080 if self.NAME == 'FourSquare' else 1440
-        self.infer_maxinternal = 43200
+        self.infer_maxlast = 10080
+        self.infer_maxinternal = 1440
         self.infer_divide = 1440
 
     def loaddata(self):
@@ -386,7 +386,8 @@ def mycollatefunc(batch):
         output[feature] = []
         for data in batch:
             output[feature].append(torch.tensor(data[feature]))
-        output[feature] = pad_sequence(output[feature], batch_first=True)
+        pad_val = -1 if feature == 'usr' else 0
+        output[feature] = pad_sequence(output[feature], batch_first=True, padding_value=pad_val)
     return output
 
 def reform(testset, name):
@@ -443,19 +444,22 @@ def ToTimeFixed(data, PATH, MODE):
 
 
 if __name__ == '__main__':
-    data = MYDATA('GeoLife', 0)
-    def data_test(data, user, traj):
-        D = pd.DataFrame.from_dict(data)
-        if ((D['loc'] == D['loc'].shift(1)) | (D['loc'] == D['loc'].shift(-1))).sum():
-            print(user, traj)
-            print(D[(D['loc'] == D['loc'].shift(1)) | (D['loc'] == D['loc'].shift(-1))])
-        if ((D['tim'].shift(-1) - D['tim'] - D['sta']).abs() > 1e-4).sum():
-            print(user, traj)
-            print(D[(D['tim'].shift(-1) - D['tim']) != D['sta']])
-        if ((D['sta'] < 10) | (D['sta'] > 10080)).sum():
-            print(user, traj)
-            print(D[(D['sta'] < 10) | (D['sta'] > 10080)])
-    for user in data.DATA:
-        for traj in data.DATA[user]:
-            data_test(data.DATA[user][traj], user, traj)
+    
+    
+    for i in range(3):
+        data = MYDATA('ISP', i)
+        def data_test(data, user, traj):
+            D = pd.DataFrame.from_dict(data)
+            if ((D['loc'] == D['loc'].shift(1)) | (D['loc'] == D['loc'].shift(-1))).sum():
+                print(user, traj)
+                print(D[(D['loc'] == D['loc'].shift(1)) | (D['loc'] == D['loc'].shift(-1))])
+            if ((D['tim'].shift(-1) - D['tim'] - D['sta']).abs() > 1e-4).sum():
+                print(user, traj)
+                print(D[(D['tim'].shift(-1) - D['tim']) != D['sta']])
+            if ((D['sta'] < 10) | (D['sta'] > 10080)).sum():
+                print(user, traj)
+                print(D[(D['sta'] < 10) | (D['sta'] > 10080)])
+        for user in data.DATA:
+            for traj in data.DATA[user]:
+                data_test(data.DATA[user][traj], user, traj)
     

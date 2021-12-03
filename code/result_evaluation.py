@@ -61,10 +61,12 @@ def radius(traj, param):
 # Calculate locations visited by the user in one trajectory
 def locations(traj, param):
     a = Counter(np.sort(traj['loc']))
-    count = np.zeros(param.loc_size)
-    for x in a:
-        count[int(x)] += a[int(x)]
-    return len(list(a.keys())) / np.sum(traj['sta']), count
+    count_time = np.zeros(param.loc_size)
+    loctim =  pd.DataFrame.from_dict(traj).groupby('loc').sum().reset_index()
+    for _, row in loctim.iterrows():
+        count_time[int(row['loc'])] = row['sta']
+    return len(list(a.keys())) / np.sum(traj['sta']), count_time
+
 
 
 # Calculate the time intervals between events
@@ -305,19 +307,18 @@ def transport_count_plot(param, method_1, method_2, original, slot, name1, name2
         plt.savefig(param.save_path + '/plots' + '/move_' + str(slot) + '.png')
 
     jsd = [JSD(num1, num3), JSD(num2, num3)]
-    mse = [mean_squared_error(count_1, count_3), mean_squared_error(count_2, count_3)]
+    mse = [100 * mean_squared_error(count_1, count_3), 100 * mean_squared_error(count_2, count_3)]
     return jsd, mse
 
 
 # For a easier call
 def EVALUATION(param, method_1, method_2, original, name1, name2, mode = 'jsd'):
     jsd = {}
-    print(1)
     jsd['move'], jsd['stay'] = transport_count_plot(param, method_1, method_2, original, 60, name1, name2, mode=mode)
     jsd['travel_distance'] = evaluation_plot(param, 'Distance', method_1, method_2, original, name1, name2, mode)
     jsd['radius'] = evaluation_plot(param, 'Radius', method_1, method_2, original, name1, name2, mode)
     jsd['duration'] = evaluation_plot(param, 'Duration', method_1, method_2, original, name1, name2, mode)
-    _, jsd['I_rank'] = location_rank_plot(param, method_1, method_2, original, name1, name2, mode)
+    jsd['G_rank'], jsd['I_rank'] = location_rank_plot(param, method_1, method_2, original, name1, name2, mode)
     jsd = pd.DataFrame(jsd, index=[name1, name2])
     if mode == 'plot':
         print(jsd)

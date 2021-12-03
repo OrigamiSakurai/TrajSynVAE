@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 import pickle
 import argparse
-from data_prepare import MYDATA
 
 
 def ToHawkes(data):
@@ -63,6 +62,9 @@ def hawkes(PATH, MODE):
 
     output = {}
     for user in Hawkes:
+
+        print('-' * 160)
+        print('INFERENCING FOR USER:' + str(user))
 
         with open('./data/train.pkl', 'wb') as f:
             pickle.dump(Hawkes[user], f)
@@ -138,12 +140,12 @@ def hawkes(PATH, MODE):
         output[user] = {key : {'loc': np.array([VALIDIDS[user][point['type_event']] for point in traj_raw if point['time_since_start'] < 1440]), 
                             'tim': np.array([point['time_since_start'] for point in traj_raw if point['time_since_start'] < 1440]), 
                             'sta': np.array([point['time_since_last_event'] for point in traj_raw if point['time_since_start'] < 1440])[1:]}
-                        for key, traj_raw in hawkes_raw.items()}
+                        for key, traj_raw in enumerate(hawkes_raw)}
 
     np.save('./data_hawkes/' + PATH + '/' + MODE + '.npy', output)
     return output
 
 if __name__ == '__main__':
-    data = MYDATA('ISP', 0)
-    
+    # data = MYDATA('ISP', 0)
+    hawkes('ISP', '0')
 

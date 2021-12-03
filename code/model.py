@@ -69,7 +69,7 @@ class USR_EMB(nn.Module):
 
     def __init__(self, param):
         super().__init__()
-        self.USERLIST = np.append(0, param.USERLIST)
+        self.USERLIST = np.append(-1, param.USERLIST)
         self.usr_size = param.usr_size + 1
         self.usr_emb_size = param.usr_emb_size
         self.emb_usr = nn.Embedding(self.usr_size, self.usr_emb_size)
@@ -293,8 +293,10 @@ class VAE(nn.Module):
     def sample(self, lout, tout, last_loc=-1):
         Lambda = tout[0][-1].squeeze().cpu().detach().numpy()
         t = np.random.exponential(1000 / Lambda, size=1)[0]
-        while t < 1 or t > self.infer_maxinternal:
-            t = np.random.exponential(1000 / Lambda, size=1)[0]
+        if t < 1:
+            t = 1
+        # while t < 1 or t > self.infer_maxinternal:
+            # t = np.random.exponential(1000 / Lambda, size=1)[0]
         prob = lout[0][-1].cpu().detach().numpy()
         if last_loc >= 0:
             prob[last_loc] = 0
@@ -313,7 +315,7 @@ class VAE(nn.Module):
         X = {'loc': [], 'tim': [t], 'sta': []}
         last_location = int(l)
 
-        for i in range(1, 5000):
+        for i in range(1, 1000):
             time = torch.tensor([X['tim']], dtype=torch.double).to(device)
             louti, touti = self.decoder(usr[:i].unsqueeze(0), time, z[:i].unsqueeze(0))
             l, t = self.sample(louti, touti, last_location)
