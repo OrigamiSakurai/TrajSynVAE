@@ -16,7 +16,7 @@ from data_prepare import mycollatefunc
 
 
 # Sets the seed for generating random numbers
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:4' if torch.cuda.is_available() else 'cpu')
 # device = torch.device('cpu')
 
 SEED = 0
@@ -305,7 +305,7 @@ class LSTMMODEL(nn.Module):
             
             self.step += 1
 
-            if epoch % 5 == 0:
+            if epoch % 1 == 0:
 
                 print('Start Validation')
 

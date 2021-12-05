@@ -61,11 +61,16 @@ def radius(traj, param):
 # Calculate locations visited by the user in one trajectory
 def locations(traj, param):
     a = Counter(np.sort(traj['loc']))
+
+    count = np.zeros(param.loc_size)
+    for x in a:
+        count[int(x)] += a[int(x)]
+
     count_time = np.zeros(param.loc_size)
     loctim =  pd.DataFrame.from_dict(traj).groupby('loc').sum().reset_index()
     for _, row in loctim.iterrows():
         count_time[int(row['loc'])] = row['sta']
-    return len(list(a.keys())) / np.sum(traj['sta']), count_time
+    return len(list(a.keys())) / np.sum(traj['sta']), count
 
 
 
@@ -324,6 +329,66 @@ def EVALUATION(param, method_1, method_2, original, name1, name2, mode = 'jsd'):
         print(jsd)
     return jsd
 
+
+def Distance_Point(x, y, X, Y):
+    if len(X) == 1:
+        return ((X - x)**2 + (Y - y)**2) ** 0.5
+    x_1, y_1, x_0, y_0 = X[1:], Y[1:], X[:-1], Y[:-1]
+    dominator = ((y_1 - y_0)**2 + (x_1 - x_0)**2)**0.5
+    x_1, y_1, x_0, y_0 = x_1[np.ix_(dominator > 0)], y_1[np.ix_(dominator > 0)], x_0[np.ix_(dominator > 0)], y_0[np.ix_(dominator > 0)]
+    dominator = dominator[np.ix_(dominator > 0)]
+    judge = (((y_1 - y_0) * (y - y_1) + (x_1 - x_0) * (x - x_1)) * ((y_1 - y_0) * (y - y_0) + (x_1 - x_0) * (x - x_0))) <= 0
+    distance = np.append(((x_0 - x)**2 + (y_0 - y)**2) ** 0.5, ((x_1[-1] - x)**2 + (y_1[-1] - y)**2) ** 0.5)
+    distance = np.array([min(distance[i], distance[i + 1]) for i in range(len(distance) - 1)])
+    Distance = np.abs((y_1 - y_0) * (x - x_0) - (x_1 - x_0) * (y - y_0)) / dominator
+    return Distance * judge + distance * (1 - judge)
+
+
+def SSPD(traj1, traj2, GPS):
+    xymin = np.array([np.min(GPS[:, 0]), np.min(GPS[:, 1])])
+    P1, P2 = 100 * (GPS[np.ix_(traj1['loc'].astype(int))] - xymin), 100 * (GPS[np.ix_(traj2['loc'].astype(int))] - xymin)
+
+    SPD1 = np.mean(np.array([Distance_Point(P1[i][0], P1[i][1], P2[:, 0], P2[:, 1]) for i in range(P1.shape[0])]))
+    SPD2 = np.mean(np.array([Distance_Point(P2[i][0], P2[i][1], P1[:, 0], P1[:, 1]) for i in range(P2.shape[0])]))
+    return (SPD1 + SPD2) / 2
+
+
+def overlapping_ratio(modeldata, original, param, plot=True):
+    minSSPD = []
+    avgSSPD = []
+    maxSSPD = []
+    for user in original:
+        print(user)
+        if user not in modeldata:
+            continue
+        count = [min([SSPD(traj1, traj2, param.GPS) for traj2 in original[user].values()]) for traj1 in modeldata[user].values()]
+        minSSPD.append(np.min(count))
+        avgSSPD.append(np.mean(count))
+        maxSSPD.append(np.max(count))
+
+    if plot == False:
+        return minSSPD, avgSSPD, maxSSPD
+
+    x_1, p_1, c_1, cc_1 = probability(np.array(minSSPD), internal=(0, 30))
+    x_2, p_2, c_2, cc_2 = probability(np.array(avgSSPD), internal=(0, 30))
+    x_3, p_3, c_3, cc_3 = probability(np.array(maxSSPD), internal=(0, 30))
+
+    plt.figure()
+    ln1, = plt.plot(x_1, c_1, color='red', linewidth=1, linestyle='-', marker="^", markersize=3)
+    ln2, = plt.plot(x_1, c_2, color='blue', linewidth=1, linestyle='-', marker="^", markersize=3)
+    ln3, = plt.plot(x_1, c_3, color='green', linewidth=1, linestyle='-', marker="^", markersize=3)
+
+    plt.xlabel('SSPD', size=20)
+    plt.ylabel('CDF', size=20)
+    plt.xticks(fontsize=15)
+    plt.yticks(fontsize=15)
+    ax = plt.gca()
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%1.3f'))
+    ax.yaxis.set_major_formatter(FormatStrFormatter('%1.2f'))
+
+    plt.legend(handles=[ln1, ln2, ln3], labels=['MinSSPD', 'AvgSSPD', 'MaxSSPD'], fontsize=18, frameon=False)
+    plt.tight_layout()
+    plt.savefig(param.save_path + '/plots' + '/SSPD.png')
 
 
 '''

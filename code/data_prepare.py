@@ -445,7 +445,10 @@ def ToTimeFixed(data, PATH, MODE):
 
 if __name__ == '__main__':
     
-    
+    ToTimeFixed(MYDATA('ISP', 0).DATA, 'ISP', '0')
+    ToTimeFixed(MYDATA('ISP', 1).DATA, 'ISP', '1')
+    ToTimeFixed(MYDATA('ISP', 2).DATA, 'ISP', '2')
+    '''
     for i in range(3):
         data = MYDATA('ISP', i)
         def data_test(data, user, traj):
@@ -462,4 +465,4 @@ if __name__ == '__main__':
         for user in data.DATA:
             for traj in data.DATA[user]:
                 data_test(data.DATA[user][traj], user, traj)
-    
+    '''

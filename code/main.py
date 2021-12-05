@@ -17,7 +17,7 @@ from lstm import LSTMMODEL
 from semi_markov import SEMIMARKOV
 from result_evaluation import EVALUATION
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:4' if torch.cuda.is_available() else 'cpu')
 # device = torch.device('cpu')
 torch.set_default_tensor_type(torch.DoubleTensor)
 
@@ -73,17 +73,13 @@ class parameters(object):
         self.trainsize = args.trainsize
         self.exptimes = args.exptimes
 
-        save_path = './RES/' + '-'.join([str(self.__dict__[v]) for _, v in enumerate(self.__dict__)]) + '/' + str(datetime.datetime.now().strftime('%Y-%m%d-%H%M') + '/')
-        # Write down the parameters
+        save_path = './RES/' + '-'.join([str(self.__dict__[v]) for _, v in enumerate(self.__dict__)]) + '/' + str(datetime.datetime.now().strftime('%Y-%m%d-%H%M') + '/0/')
         os.makedirs(save_path)
-        os.makedirs(save_path + 'plots')
-        os.makedirs(save_path + 'data')
-        with open(save_path + 'result_evaluation.csv', 'a', encoding='utf-8', newline='') as f:
-            csv_writer = csv.writer(f)
-            csv_writer.writerow([x for x in self.__dict__])
-            csv_writer.writerow([self.__dict__[v] for v in self.__dict__])
-            csv_writer.writerow(['Method', 'travel_distance', 'radius', 'duration', 'G_rank', 'I_Rank', 'move', 'stay'])
+        param_name = [x for x in self.__dict__]
+        param_value = [self.__dict__[v] for v in self.__dict__]
         self.save_path = save_path
+        self.param_name = param_name
+        self.param_value = param_value
 
     def data_info(self, data):
         self.POI = data.POI
@@ -146,6 +142,16 @@ if __name__ == '__main__':
     SM = SEMIMARKOV(data.REFORM['train'])
     print('Data Loaded')
     for i in range(param.exptimes):
+
+        param.save_path = param.save_path[:-2] + str(i) + '/'
+        os.makedirs(param.save_path + 'plots')
+        os.makedirs(param.save_path + 'data')
+        with open(param.save_path + 'result_evaluation.csv', 'a', encoding='utf-8', newline='') as f:
+            csv_writer = csv.writer(f)
+            csv_writer.writerow(param.param_name)
+            csv_writer.writerow(param.param_value)
+            csv_writer.writerow(['Method', 'travel_distance', 'radius', 'duration', 'G_rank', 'I_Rank', 'move', 'stay'])
+
         if param.model_type == 'VAE':
             model = VAE(param) 
         else:

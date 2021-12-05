@@ -89,7 +89,7 @@ def hawkes(PATH, MODE):
         parser.add_argument('-fp', '--FilePretrain', required=False,
                             help='File of pretrained model (e.g. ./tracks/track_PID=XX_TIME=YY/model.pkl)')
         parser.add_argument('-tp', '--TrackPeriod', default=1, type=int, help='Track period of training')
-        parser.add_argument('-me', '--MaxEpoch', default=10, type=int, help='Max epoch number of training')
+        parser.add_argument('-me', '--MaxEpoch', default=1, type=int, help='Max epoch number of training')
         parser.add_argument('-sb', '--SizeBatch', default=1, type=int, help='Size of mini-batch')
         parser.add_argument('-op', '--Optimizer', default='adam', type=str, choices=['adam', 'sgd'],
                             help='Optimizer of training')
@@ -146,6 +146,5 @@ def hawkes(PATH, MODE):
     return output
 
 if __name__ == '__main__':
-    # data = MYDATA('ISP', 0)
     hawkes('ISP', '0')
 
